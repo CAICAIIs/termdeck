@@ -1,12 +1,12 @@
 # TermDeck
 
-TermDeck is a Linux daemon and CLI for persistent PTY-backed terminal sessions. It lets automation start a shell, send commands, poll output, detect prompts, inspect logs, and expose an observe-only web view without giving browser users terminal input capability.
+TermDeck is a Linux and macOS daemon and CLI for persistent PTY-backed terminal sessions. It lets automation start a shell, send commands, poll output, detect prompts, inspect logs, and expose an observe-only web view without giving browser users terminal input capability.
 
 TermDeck targets agent workflows where the terminal must outlive one CLI invocation. The daemon owns the PTY. The CLI and web UI connect to the daemon over local transports.
 
 ## Status
 
-- Platform: Linux
+- Platform: Linux and macOS
 - Runtime: Node.js 22+
 - Package manager used by this repo: pnpm
 - Release artifact: GitHub Release tarball
@@ -24,7 +24,7 @@ TermDeck targets agent workflows where the terminal must outlive one CLI invocat
 - Session artifacts: transcript, events, commands, interactions, metadata, state
 - Historical inspection: history, inspect, log, events, replay
 - Password input path that avoids command logging
-- Linux foreground process-group signal targeting via `/proc/<pid>/stat` `tpgid`
+- Cross-platform signal targeting: Linux `/proc/<pid>/stat` `tpgid`, macOS/BSD `ps` `tpgid`, then process-group/process fallbacks
 
 ## Install
 
@@ -35,10 +35,13 @@ pnpm install
 pnpm run build
 ```
 
-`node-pty` is a native dependency. pnpm must allow its build script. This repo includes:
+`node-pty` is a native dependency. pnpm must allow its build script. For pnpm 11+, this repo includes `pnpm-workspace.yaml` with explicit `allowBuilds` entries:
 
-```ini
-only-built-dependencies[]=node-pty
+```yaml
+allowBuilds:
+  '@bufbuild/buf': true
+  esbuild: true
+  node-pty: true
 ```
 
 The package postinstall check fails fast if the native binding is missing.
@@ -204,9 +207,8 @@ CI runs typecheck, lint, tests, and build on GitHub Actions.
 
 ## Limitations
 
-- Linux only.
 - Exact terminal semantics still depend on `node-pty` and the host shell.
-- Signal targeting uses Linux `/proc/<pid>/stat` `tpgid`; if unavailable or stale, TermDeck falls back to process-group or process signaling.
+- Signal targeting uses Linux `/proc/<pid>/stat` `tpgid` where available, macOS/BSD `ps -o tpgid=` where available, then process-group and process signaling fallbacks.
 - The web UI is observe-only by design. It does not accept human terminal input.
 - The browser event decoder handles the current event schema only.
 

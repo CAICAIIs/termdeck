@@ -1,12 +1,12 @@
 # TermDeck
 
-TermDeck 是一个 Linux daemon 和 CLI，用于管理基于 PTY 的持久终端会话。它可以让自动化程序启动 shell、发送命令、轮询输出、识别提示符、查看日志，并提供只读 Web 观察界面。浏览器用户不能向终端输入内容。
+TermDeck 是一个 Linux 和 macOS daemon/CLI，用于管理基于 PTY 的持久终端会话。它可以让自动化程序启动 shell、发送命令、轮询输出、识别提示符、查看日志，并提供只读 Web 观察界面。浏览器用户不能向终端输入内容。
 
 TermDeck 面向 agent 工作流：终端会话需要跨越单次 CLI 调用继续存在。daemon 持有 PTY，CLI 和 Web UI 通过本地传输连接 daemon。
 
 ## 状态
 
-- 平台：Linux
+- 平台：Linux 和 macOS
 - 运行时：Node.js 22+
 - 本仓库包管理器：pnpm
 - 发布产物：GitHub Release tarball
@@ -24,7 +24,7 @@ TermDeck 面向 agent 工作流：终端会话需要跨越单次 CLI 调用继�
 - 会话文件：transcript、events、commands、interactions、metadata、state
 - 历史检查：history、inspect、log、events、replay
 - 密码输入路径不会写入 command log
-- Linux 下通过 `/proc/<pid>/stat` 的 `tpgid` 尽量向前台进程组发送信号
+- 跨平台信号发送：Linux 使用 `/proc/<pid>/stat` 的 `tpgid`，macOS/BSD 使用 `ps` 的 `tpgid`，再退回到进程组或进程信号
 
 ## 安装
 
@@ -35,10 +35,13 @@ pnpm install
 pnpm run build
 ```
 
-`node-pty` 是 native 依赖。pnpm 必须允许它的 build script。本仓库包含：
+`node-pty` 是 native 依赖。pnpm 必须允许它的 build script。pnpm 11+ 使用 `pnpm-workspace.yaml` 中的 `allowBuilds` 明确批准构建脚本：
 
-```ini
-only-built-dependencies[]=node-pty
+```yaml
+allowBuilds:
+  '@bufbuild/buf': true
+  esbuild: true
+  node-pty: true
 ```
 
 如果 native binding 缺失，package 的 postinstall 检查会直接失败。
@@ -204,9 +207,8 @@ CI 在 GitHub Actions 上运行 typecheck、lint、test 和 build。
 
 ## 限制
 
-- 只支持 Linux。
 - 精确终端行为仍取决于 `node-pty` 和宿主 shell。
-- 信号发送使用 Linux `/proc/<pid>/stat` 的 `tpgid`；如果该值不可用或过期，会退回到进程组或进程信号。
+- 信号发送会优先使用 Linux `/proc/<pid>/stat` 的 `tpgid`；在 macOS/BSD 上会尝试 `ps -o tpgid=`；如果前台进程组不可用，会退回到进程组或进程信号。
 - Web UI 按设计只读，不接受人类终端输入。
 - 浏览器事件解码器只覆盖当前事件 schema。
 

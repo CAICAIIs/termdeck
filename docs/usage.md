@@ -1,6 +1,6 @@
 # TermDeck Usage Guide
 
-This guide describes operational use of TermDeck on Linux. See [Scenarios](scenarios.md) for task-oriented examples.
+This guide describes operational use of TermDeck on Linux and macOS. See [Scenarios](scenarios.md) for task-oriented examples.
 
 ## Mental model
 
@@ -186,7 +186,7 @@ The CLI reads from the TTY. The daemon writes `[password sent]` to the interacti
 
 ## Signals
 
-Send a signal to the foreground process group when Linux exposes it through `/proc/<pid>/stat`:
+Send a signal to the foreground process group when TermDeck can identify it:
 
 ```bash
 termdeck signal main INT --timeout-ms 5000
@@ -195,7 +195,7 @@ termdeck signal main TERM --timeout-ms 5000
 
 Signal names may omit the `SIG` prefix. `INT` and `SIGINT` are equivalent.
 
-If foreground process-group signaling fails with `ESRCH`, TermDeck falls back to signaling the PTY shell process.
+On Linux, TermDeck first reads `tpgid` from `/proc/<pid>/stat`. On macOS and BSD-style systems, it first asks `ps -o tpgid=`. If foreground process-group signaling is unavailable or fails with `ESRCH`, TermDeck falls back to the PTY process group and then the PTY shell process. `termdeck metadata <session>` includes the detected platform signal strategy for debugging.
 
 ## Inspect live sessions
 
@@ -332,6 +332,8 @@ pnpm install
 pnpm rebuild node-pty
 node scripts/install-check.mjs
 ```
+
+With pnpm 11+, build approval is stored in `pnpm-workspace.yaml` under `allowBuilds`. If install reports ignored builds for `node-pty`, `@bufbuild/buf`, or `esbuild`, verify those entries are present and rerun `pnpm install`.
 
 Stale socket:
 

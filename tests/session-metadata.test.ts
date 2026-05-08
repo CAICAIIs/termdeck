@@ -18,6 +18,8 @@ test('session writes metadata state command and interaction logs', async () => {
     assert.match(readFileSync(String(meta.commands), 'utf8'), /printf meta-ok/);
     assert.match(readFileSync(String(meta.interaction), 'utf8'), /meta-ok/);
     assert.equal(meta.cwd, cwd);
+    assert.equal(typeof (meta.platform as { platform?: unknown }).platform, 'string');
+    assert.equal(typeof (meta.platform as { preferredTarget?: unknown }).preferredTarget, 'object');
   } finally {
     s.kill();
     rmSync(cwd, { recursive: true, force: true });

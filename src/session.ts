@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import * as pty from 'node-pty';
 import xtermHeadless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
-import { signalProcessGroup } from './platform.js';
+import { platformSignalInfo, signalProcessGroup } from './platform.js';
 import { TextRing } from './ring.js';
 import { detectState, type StateResult } from './state.js';
 import type { Event, PromptKind, Status } from './protocol.js';
@@ -162,6 +162,7 @@ export class TermSession extends EventEmitter {
       interaction: this.interactionPath,
       state: this.statePath,
       session: this.sessionPath,
+      platform: platformSignalInfo(this.ptyProcess.pid),
       ring: this.ring.stats(),
     };
   }
@@ -188,7 +189,7 @@ export class TermSession extends EventEmitter {
 ${data}
 ${delimiter}
 printf '\n__TERMDECK_BEGIN:%s__\n' '${delimiter}'; ${shell} /tmp/${delimiter}.sh; rc=$?; rm -f /tmp/${delimiter}.sh; printf '\n__TERMDECK_EXIT:%s:%s__\n' '${delimiter}' "$rc"`;
-    return filterScriptResult(await this.paste(command, true, timeoutMs, quiescenceMs), begin, end);
+    return filterScriptResult(await this.writeAndWait(`${command}\r`, timeoutMs, quiescenceMs, true), begin, end);
   }
 
   paste(data: string, enter = false, timeoutMs = 30_000, quiescenceMs = 1_000): Promise<WaitResult> {
