@@ -28,6 +28,7 @@ TermDeck 是给自动化 agent 使用的持久 PTY daemon 和 CLI。核心目标
 - 即使用户授权 push，执行前也要说明将执行的远程写入命令。
 - `gh` 默认只做只读检查，除非用户明确授权远程写入。
 - 不读取或打印 secrets。`termdeck password` 是唯一面向密码输入的路径，不能把密码写进命令日志。
+- 用户本机 Docker 默认使用 OrbStack。需要容器复现或 Linux 环境 smoke 时，优先按 OrbStack 的 Docker context、网络和文件共享行为排查，不假设 Docker Desktop。
 
 ## OpenSpec / Humanize 连接方式
 

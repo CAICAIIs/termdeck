@@ -40,6 +40,7 @@ pnpm run smoke:daemon -- --built
 - “agent 可稳定 step”：`termdeck step <session> ... --timeout-ms ... --lines ...` 输出目标文本和 `[termdeck] status=ready`。
 - “可调试”：`termdeck doctor`、`termdeck log`、`termdeck events`、`termdeck inspect` 能给出明确证据。
 - “跨平台”：本机测试通过，并让 CI 覆盖 Ubuntu/macOS。
+- “Linux 容器复现”：仅在需要时使用 OrbStack Docker，记录 `docker context ls`、`docker info`、镜像名和容器内命令输出。
 
 ## 最终声明前检查
 

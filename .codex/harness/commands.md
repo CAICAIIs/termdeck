@@ -70,6 +70,22 @@ TERMDECK_HOME="$TERMDECK_HOME" pnpm run dev:cli -- events repro --limit 80
 TERMDECK_HOME="$TERMDECK_HOME" pnpm run dev:cli -- inspect repro
 ```
 
+## Docker / OrbStack
+
+本机 Docker 默认按 OrbStack 处理。TermDeck 当前没有必需的容器开发路径；只有在需要复现 Linux-only 行为、容器内 shell、或用户明确要求 Docker 验证时才引入容器。
+
+```bash
+docker context ls
+docker info
+docker run --rm -it -v "$PWD:/work" -w /work node:24-bookworm bash
+```
+
+注意：
+
+- 优先确认当前 Docker context 指向 OrbStack 提供的 engine。
+- macOS 上的本机 smoke 仍然优先用 `pnpm run smoke:daemon`；Linux 容器 smoke 是补充证据，不替代 macOS 本机验证。
+- 容器内调试 PTY、signals、文件权限时，要明确记录宿主 macOS + OrbStack + 容器镜像三层环境。
+
 日志位置：
 
 - daemon 日志：`$TERMDECK_HOME/termdeckd.log`
