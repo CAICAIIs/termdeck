@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLinuxStatTpgid, parsePsNumber, platformSignalInfo } from '../src/platform.js';
+import { parseLinuxStatTpgid, parsePsNumber, platformSignalInfo, signalProcessGroup, type ProcessLookup } from '../src/platform.js';
+
+function lookup(tpgid: string, pgid: string): ProcessLookup {
+  return {
+    platform: 'darwin',
+    readFile: () => '',
+    execFile: (_file, args) => args.includes('tpgid=') ? tpgid : pgid,
+  };
+}
+
+function esrch(): NodeJS.ErrnoException {
+  const err = new Error('missing process') as NodeJS.ErrnoException;
+  err.code = 'ESRCH';
+  return err;
+}
 
 test('parseLinuxStatTpgid reads Linux foreground process group from proc stat', () => {
   const stat = '12345 (bash with space) S 1 2 3 4 6789 0 0 0 0';
@@ -58,4 +72,55 @@ test('platformSignalInfo falls back to process group then pid', () => {
     },
   });
   assert.deepEqual(pidInfo.preferredTarget, { mode: 'process', id: 111, source: 'pid' });
+});
+
+test('signalProcessGroup succeeds on foreground process group first', () => {
+  const calls: number[] = [];
+  const result = signalProcessGroup(111, 'INT', {
+    lookup: lookup('444', '555'),
+    kill: (pid) => {
+      calls.push(pid);
+    },
+  });
+  assert.equal(result.mode, 'foreground-process-group');
+  assert.deepEqual(calls, [-444]);
+});
+
+test('signalProcessGroup falls back from tpgid to pgid on ESRCH', () => {
+  const calls: number[] = [];
+  const result = signalProcessGroup(111, 'TERM', {
+    lookup: lookup('444', '555'),
+    kill: (pid) => {
+      calls.push(pid);
+      if (pid === -444) throw esrch();
+    },
+  });
+  assert.equal(result.mode, 'process-group');
+  assert.deepEqual(calls, [-444, -555]);
+});
+
+test('signalProcessGroup falls back to pid after group ESRCH', () => {
+  const calls: number[] = [];
+  const result = signalProcessGroup(111, 'HUP', {
+    lookup: lookup('444', '555'),
+    kill: (pid) => {
+      calls.push(pid);
+      if (pid < 0) throw esrch();
+    },
+  });
+  assert.equal(result.mode, 'process');
+  assert.deepEqual(calls, [-444, -555, 111]);
+});
+
+test('signalProcessGroup dedupes equal tpgid and pgid', () => {
+  const calls: number[] = [];
+  const result = signalProcessGroup(111, 'INT', {
+    lookup: lookup('444', '444'),
+    kill: (pid) => {
+      calls.push(pid);
+      if (pid < 0) throw esrch();
+    },
+  });
+  assert.equal(result.mode, 'process');
+  assert.deepEqual(calls, [-444, 111]);
 });

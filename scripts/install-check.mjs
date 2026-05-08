@@ -1,16 +1,17 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
-function nodePtyRoot() {
+export function nodePtyRoot() {
   const pkg = require.resolve('node-pty/package.json');
   return pkg.slice(0, -'package.json'.length);
 }
 
-function nativeExists(root) {
+export function nativeExists(root) {
   const native = [
     join(root, 'build/Release/pty.node'),
     join(root, 'build/Debug/pty.node'),
@@ -19,7 +20,7 @@ function nativeExists(root) {
   return native.some(existsSync);
 }
 
-function smokeSpawn() {
+export function smokeSpawn() {
   const code = `
     const pty = require('node-pty');
     const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
@@ -30,40 +31,64 @@ function smokeSpawn() {
   return res.status === 0 ? undefined : (res.stderr || res.stdout || `exit ${res.status}`).trim();
 }
 
-function rebuildFromSource(root) {
-  const nodeGyp = require.resolve('node-gyp/bin/node-gyp.js');
-  execFileSync(process.execPath, [nodeGyp, 'rebuild'], {
+export function rebuildFromSource(root) {
+  const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
+  const args = process.platform === 'win32'
+    ? ['/d', '/s', '/c', 'node scripts\\prebuild.js || node-gyp rebuild']
+    : ['-lc', 'node scripts/prebuild.js || node-gyp rebuild'];
+  const pathPrefix = [
+    join(process.cwd(), 'node_modules', '.bin'),
+    join(root, 'node_modules', '.bin'),
+    process.env.PATH ?? '',
+  ].join(process.platform === 'win32' ? ';' : ':');
+  const res = spawnSync(shell, args, {
     cwd: root,
     stdio: 'inherit',
-    env: { ...process.env, npm_config_build_from_source: 'true' },
+    env: { ...process.env, PATH: pathPrefix, npm_config_build_from_source: 'true' },
   });
+  if (res.error) {
+    throw new Error(`node-pty source rebuild failed to start: ${res.error.message}`);
+  }
+  if (res.status !== 0) {
+    throw new Error(`node-pty source rebuild failed with exit code ${res.status}`);
+  }
 }
 
-function check() {
-  const root = nodePtyRoot();
-  if (!nativeExists(root)) {
+export function checkWith(deps = {}) {
+  const root = (deps.nodePtyRoot ?? nodePtyRoot)();
+  const hasNative = (deps.nativeExists ?? nativeExists)(root);
+  if (!hasNative) {
     throw new Error('node-pty native binding is missing. pnpm users must allow node-pty build scripts or install a package with prebuilt bindings.');
   }
 
-  const smokeError = smokeSpawn();
-  if (!smokeError) return;
+  const runSmoke = deps.smokeSpawn ?? smokeSpawn;
+  const smokeError = runSmoke();
+  if (!smokeError) return { rebuilt: false };
 
-  if (process.platform === 'win32') {
+  const platform = deps.platform ?? process.platform;
+  if (platform === 'win32') {
     throw new Error(`node-pty native binding failed runtime smoke test: ${smokeError}`);
   }
 
-  console.error(`node-pty native binding failed runtime smoke test, rebuilding from source: ${smokeError}`);
-  rebuildFromSource(root);
+  (deps.log ?? console.error)(`node-pty native binding failed runtime smoke test, rebuilding from source: ${smokeError}`);
+  (deps.rebuildFromSource ?? rebuildFromSource)(root);
 
-  const retryError = smokeSpawn();
+  const retryError = runSmoke();
   if (retryError) {
     throw new Error(`node-pty native binding still fails after source rebuild: ${retryError}`);
   }
+  return { rebuilt: true };
 }
 
-try {
-  check();
-} catch (err) {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exit(1);
+function isMain() {
+  return process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+}
+
+if (isMain()) {
+  try {
+    checkWith();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
 }

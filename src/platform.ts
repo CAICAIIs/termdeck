@@ -17,7 +17,12 @@ export type PlatformSignalInfo = {
   preferredTarget: SignalTarget;
 };
 
-type ProcessLookup = {
+export type SignalProcessOptions = {
+  lookup?: ProcessLookup;
+  kill?: (pid: number, signal: NodeJS.Signals) => void;
+};
+
+export type ProcessLookup = {
   platform: NodeJS.Platform;
   readFile(path: string): string;
   execFile(file: string, args: string[]): string;
@@ -29,9 +34,13 @@ const defaultLookup: ProcessLookup = {
   execFile: (file, args) => execFileSync(file, args, { encoding: 'utf8', timeout: 1_000 }),
 };
 
-export function signalProcessGroup(pid: number, signal: string): { mode: SignalDeliveryMode; detail: string } {
+export function signalProcessGroup(pid: number, signal: string, options: SignalProcessOptions = {}): { mode: SignalDeliveryMode; detail: string } {
   signal = normalizeSignal(signal);
-  const info = platformSignalInfo(pid);
+  const lookup = options.lookup ?? defaultLookup;
+  const kill = options.kill ?? ((targetPid, sig) => {
+    process.kill(targetPid, sig);
+  });
+  const info = platformSignalInfo(pid, lookup);
   const targets = dedupeTargets([
     info.preferredTarget,
     info.processGroup ? { mode: 'process-group', id: info.processGroup, source: 'posix-ps' as const } : undefined,
@@ -41,14 +50,14 @@ export function signalProcessGroup(pid: number, signal: string): { mode: SignalD
   for (const target of targets) {
     try {
       const killPid = target.mode === 'process' ? target.id : -target.id;
-      process.kill(killPid, signal as NodeJS.Signals);
+      kill(killPid, signal as NodeJS.Signals);
       return { mode: target.mode, detail: `sent ${signal} to ${target.mode} ${target.id} (${target.source})` };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ESRCH') throw err;
     }
   }
 
-  process.kill(pid, signal as NodeJS.Signals);
+  kill(pid, signal as NodeJS.Signals);
   return { mode: 'process', detail: `sent ${signal} to process ${pid}` };
 }
 
@@ -124,7 +133,8 @@ function dedupeTargets(targets: Array<SignalTarget | undefined>): SignalTarget[]
   const out: SignalTarget[] = [];
   for (const target of targets) {
     if (!target) continue;
-    const key = `${target.mode}:${target.id}`;
+    const killPid = target.mode === 'process' ? target.id : -target.id;
+    const key = String(killPid);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(target);
