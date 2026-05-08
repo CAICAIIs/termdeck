@@ -1,6 +1,7 @@
 node_modules
 dist
 .termdeck
+.termdeck-review
 .humanize
 *.log
 .DS_Store
