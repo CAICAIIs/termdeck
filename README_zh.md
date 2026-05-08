@@ -54,6 +54,12 @@ allowBuilds:
 
 ## 快速开始
 
+检查本机环境是否就绪：
+
+```bash
+termdeck doctor
+```
+
 启动 daemon：
 
 ```bash
@@ -156,6 +162,14 @@ termdeck expect <session> <pattern> [--timeout-ms N]
 termdeck expect-prompt <session> [--timeout-ms N]
 ```
 
+诊断：
+
+```bash
+termdeck doctor [--require-daemon] [--autostart] [--json]
+```
+
+`doctor` 会检查 Node.js、pnpm native build 批准配置、`node-pty`、daemon 可达性、socket 权限和当前信号策略。不带 `--require-daemon` 时，daemon 未启动只是 warning，方便先做安装检查。
+
 ## Daemon 配置
 
 环境变量：
@@ -200,10 +214,12 @@ pnpm run typecheck
 pnpm run lint
 pnpm test
 pnpm run build
+pnpm run smoke:daemon
+pnpm run smoke:daemon -- --built
 pnpm pack
 ```
 
-CI 在 GitHub Actions 上运行 typecheck、lint、test 和 build。
+CI 在 GitHub Actions 上同时覆盖 Ubuntu 和 macOS，并运行 typecheck、lint、test、build 和 built daemon smoke。
 
 ## 限制
 

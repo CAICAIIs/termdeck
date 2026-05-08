@@ -54,6 +54,12 @@ The package postinstall check fails fast if the native binding is missing.
 
 ## Quick start
 
+Check local readiness:
+
+```bash
+termdeck doctor
+```
+
 Start the daemon:
 
 ```bash
@@ -156,6 +162,14 @@ termdeck expect <session> <pattern> [--timeout-ms N]
 termdeck expect-prompt <session> [--timeout-ms N]
 ```
 
+Diagnostics:
+
+```bash
+termdeck doctor [--require-daemon] [--autostart] [--json]
+```
+
+`doctor` checks Node.js, package-manager native-build approvals, `node-pty`, daemon reachability, socket permissions, and the current signal strategy. Without `--require-daemon`, a stopped daemon is a warning so install checks can run before the service is started.
+
 ## Daemon configuration
 
 Environment variables:
@@ -200,10 +214,12 @@ pnpm run typecheck
 pnpm run lint
 pnpm test
 pnpm run build
+pnpm run smoke:daemon
+pnpm run smoke:daemon -- --built
 pnpm pack
 ```
 
-CI runs typecheck, lint, tests, and build on GitHub Actions.
+CI runs typecheck, lint, tests, build, and built daemon smoke on Ubuntu and macOS.
 
 ## Limitations
 

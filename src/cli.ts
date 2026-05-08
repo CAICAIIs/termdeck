@@ -4,6 +4,7 @@ import { connect } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
+import { formatDoctorReport, runDoctor } from './doctor.js';
 import { FrameReader, writeFrame, type Request, type RequestInput, type Response } from './protocol.js';
 import { daemonLogPath, socketPath } from './paths.js';
 
@@ -194,6 +195,26 @@ async function readSecret(): Promise<string> {
 
 const program = new Command();
 program.name('termdeck').description('Persistent terminal sessions for agents and observers');
+
+program.command('doctor')
+  .description('check local runtime, install, daemon, and signal readiness')
+  .option('--json')
+  .option('--require-daemon', 'fail when termdeckd is not reachable')
+  .option('--autostart', 'start termdeckd when it is not running')
+  .action(async (opts) => {
+    if (opts.autostart) {
+      try {
+        await request({ op: 'list' });
+      } catch (err) {
+        if (!isDaemonMissing(err)) throw err;
+        await startDaemon();
+      }
+    }
+    const report = await runDoctor({ requireDaemon: opts.requireDaemon || opts.autostart });
+    if (opts.json) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    else process.stdout.write(formatDoctorReport(report));
+    if (!report.ok) process.exitCode = 1;
+  });
 
 program.command('new')
   .argument('<session>')

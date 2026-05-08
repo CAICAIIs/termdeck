@@ -9,7 +9,13 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -24,3 +30,4 @@ jobs:
       - run: pnpm run lint
       - run: pnpm test
       - run: pnpm run build
+      - run: pnpm run smoke:daemon -- --built

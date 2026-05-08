@@ -15,6 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "tsx --test tests/*.test.ts",
+    "smoke:daemon": "node scripts/smoke-daemon.mjs",
     "prepack": "pnpm run build",
     "start:daemon": "node dist/daemon.js",
     "postinstall": "node scripts/install-check.mjs"
