@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
@@ -31,20 +31,23 @@ export function smokeSpawn() {
   return res.status === 0 ? undefined : (res.stderr || res.stdout || `exit ${res.status}`).trim();
 }
 
-export function rebuildFromSource(root) {
-  const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
-  const args = process.platform === 'win32'
+export function rebuildFromSource(root, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const shell = platform === 'win32' ? 'cmd.exe' : '/bin/sh';
+  const args = platform === 'win32'
     ? ['/d', '/s', '/c', 'node scripts\\prebuild.js || node-gyp rebuild']
     : ['-lc', 'node scripts/prebuild.js || node-gyp rebuild'];
   const pathPrefix = [
+    dirname(options.execPath ?? process.execPath),
     join(process.cwd(), 'node_modules', '.bin'),
     join(root, 'node_modules', '.bin'),
-    process.env.PATH ?? '',
-  ].join(process.platform === 'win32' ? ';' : ':');
-  const res = spawnSync(shell, args, {
+    env.PATH ?? '',
+  ].join(options.pathDelimiter ?? delimiter);
+  const res = (options.spawnSync ?? spawnSync)(shell, args, {
     cwd: root,
     stdio: 'inherit',
-    env: { ...process.env, PATH: pathPrefix, npm_config_build_from_source: 'true' },
+    env: { ...env, PATH: pathPrefix, npm_config_build_from_source: 'true' },
   });
   if (res.error) {
     throw new Error(`node-pty source rebuild failed to start: ${res.error.message}`);
