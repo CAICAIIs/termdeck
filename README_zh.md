@@ -35,7 +35,7 @@ pnpm install
 pnpm run build
 ```
 
-`node-pty` 是 native 依赖。pnpm 必须允许它的 build script。pnpm 11+ 使用 `pnpm-workspace.yaml` 中的 `allowBuilds` 明确批准构建脚本：
+`node-pty` 是 native 依赖。pnpm 必须允许它的 build script。本仓库同时保留两套 pnpm 配置批准方式：pnpm 10 读取 `.npmrc` 的 `only-built-dependencies[]`，pnpm 11+ 读取 `pnpm-workspace.yaml` 的 `allowBuilds`：
 
 ```yaml
 allowBuilds:

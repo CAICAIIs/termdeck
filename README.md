@@ -35,7 +35,7 @@ pnpm install
 pnpm run build
 ```
 
-`node-pty` is a native dependency. pnpm must allow its build script. For pnpm 11+, this repo includes `pnpm-workspace.yaml` with explicit `allowBuilds` entries:
+`node-pty` is a native dependency. pnpm must allow its build script. The repo keeps approvals for both supported pnpm config styles: pnpm 10 reads `.npmrc` `only-built-dependencies[]`, while pnpm 11+ reads `pnpm-workspace.yaml` `allowBuilds`:
 
 ```yaml
 allowBuilds:

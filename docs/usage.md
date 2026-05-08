@@ -333,7 +333,7 @@ pnpm rebuild node-pty
 node scripts/install-check.mjs
 ```
 
-With pnpm 11+, build approval is stored in `pnpm-workspace.yaml` under `allowBuilds`. If install reports ignored builds for `node-pty`, `@bufbuild/buf`, or `esbuild`, verify those entries are present and rerun `pnpm install`.
+Build approval is stored in both supported pnpm config styles: pnpm 10 reads `.npmrc` `only-built-dependencies[]`, while pnpm 11+ reads `pnpm-workspace.yaml` `allowBuilds`. If install reports ignored builds for `node-pty`, `@bufbuild/buf`, or `esbuild`, verify both config files still contain those package names and rerun `pnpm install`.
 
 Stale socket:
 
