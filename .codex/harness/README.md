@@ -1,6 +1,6 @@
 # TermDeck Codex Harness
 
-状态：2026-05-08 刷新。适用于本仓库的日常开发、issue 实现、debug、OpenSpec 规划和 Humanize RLCR 执行。
+状态：2026-05-19 刷新。适用于本仓库的日常开发、issue 实现、debug、OpenSpec 规划和 Humanize RLCR 执行，也适用于把 TermDeck 作为 Codex App 的持久终端后端来验证。
 
 ## 项目定位
 
@@ -14,10 +14,28 @@ TermDeck 是给自动化 agent 使用的持久 PTY daemon 和 CLI。核心目标
 4. 涉及 daemon/CLI/安装/平台行为时，必须跑 `pnpm run smoke:daemon -- --built`。
 5. 最后审 diff：确认没有生成物、密钥、无关文件、未解释的依赖或范围漂移。
 
+## Codex App 集成目标
+
+TermDeck 在用户日常 Codex App 工作流里的定位是“持久终端和后台任务后端”，不是替代所有短命令。
+
+默认触发条件：
+
+- dev server、watch、benchmark、长测试、长 debug、交互式 REPL/TUI。
+- 需要跨 Codex turn 恢复状态、轮询输出、搜索日志或给多个 agent/人类观察同一终端。
+- 需要把命令、cwd、ready 检查、日志和停止方式记录进项目 `.codex/harness/sessions.md`。
+
+默认不触发条件：
+
+- 很短的一次性只读检查，例如 `git status --short`、`rg`、`sed`、小型 `cat`。
+- 涉及密钥输入的命令，除非使用 `termdeck password`。
+- 没有可恢复价值的临时命令。
+
 ## 文件入口
 
 - 命令清单：[commands.md](commands.md)
 - 验证梯度：[verification.md](verification.md)
+- 黄金规则：[rules.md](rules.md)
+- 评审清单：[review.md](review.md)
 - 长跑会话：[sessions.md](sessions.md)
 - 决策记录：[decisions.md](decisions.md)
 

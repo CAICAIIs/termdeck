@@ -29,6 +29,48 @@ ready 信号：
 - `termdeck list` 或 `pnpm run dev:cli -- list` 退出码为 0。
 - `termdeck state <session> --lines 12` 输出 `[termdeck] status=ready` 或明确的运行状态。
 
+## Codex App 日常调用入口
+
+本机已经把当前 checkout 通过 `npm link` 暴露为全局命令：
+
+```bash
+termdeck doctor
+termdeck project-step 'pwd && ls' --cwd "$PWD" --autostart --timeout-ms 5000
+termdeck task dashboard --autostart
+```
+
+Codex App 的默认选择：
+
+- 短命令：继续用普通终端工具。
+- 需要跨 turn 保留状态的项目命令：用 `termdeck project-step`。
+- dev server、watch、长 benchmark、长测试：用 `termdeck task start`。
+- 最终汇报或继续调试前：用 `termdeck summary`、`termdeck task logs`、`termdeck search` 取证。
+
+项目级命令模板：
+
+```bash
+termdeck project-step '<command>' --cwd "$PWD" --autostart --timeout-ms 120000 --lines 20
+termdeck list --cwd "$PWD"
+termdeck summary <session> --lines 80 --events 20 --autostart
+```
+
+后台任务模板：
+
+```bash
+termdeck task start web 'pnpm dev' --cwd "$PWD" --ready-port 3000 --autostart
+termdeck task status web --autostart
+termdeck task logs web --lines 120 --autostart
+termdeck task stop web --autostart
+```
+
+搜索历史模板：
+
+```bash
+termdeck search 'error|failed|panic|timeout' --regex --limit 50 --context 2
+```
+
+每次启动可复用的长跑 task 后，把 task 名、命令、cwd、端口或 ready 检查、日志命令和停止命令写进对应项目的 `.codex/harness/sessions.md`。
+
 ## 测试
 
 ```bash

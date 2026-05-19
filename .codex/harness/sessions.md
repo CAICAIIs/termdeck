@@ -2,6 +2,14 @@
 
 当前没有需要长期保留的 daemon 或 test watcher。
 
+## 2026-05-19：Codex App 全局链接验证
+
+- 目的：确认当前 checkout 能作为 Codex App 的长期终端后端被日常调用。
+- 命令：`npm link`、`termdeck doctor`、`termdeck step caicodex-smoke 'pwd && echo termdeck-ok' --cwd "$PWD" --timeout-ms 5000 --lines 4 --autostart`
+- 结果：全局命令已出现在 `/opt/homebrew/bin/termdeck`、`/opt/homebrew/bin/termdeckd`、`/opt/homebrew/bin/termdeck-mcp`；`doctor` 通过；`step` 能自动启动 daemon 并返回 `status=ready`。
+- 停止方式：`termdeck kill caicodex-smoke`
+- 备注：daemon 未常驻，按需 `--autostart`。
+
 ## 临时 daemon 模板
 
 ```bash
