@@ -17,11 +17,13 @@ TermDeck targets agent workflows where the terminal must outlive one CLI invocat
 - Persistent PTY sessions via `node-pty`
 - Local daemon: `termdeckd`
 - CLI: `termdeck`
+- MCP server: `termdeck-mcp`
 - Length-prefixed protobuf CLI-to-daemon protocol over Unix socket
 - Server-side terminal buffer via `@xterm/headless`
 - Observe-only web UI with JSON REST control endpoints and binary protobuf WebSocket events
 - Prompt/state classification: running, ready, repl, password, confirm, editor, pager, continuation, eof
 - Session artifacts: transcript, events, commands, interactions, metadata, state
+- Shell command markers for `run` output boundaries and exit-code capture
 - Historical inspection: history, inspect, log, events, replay
 - Password input path that avoids command logging
 - Cross-platform signal targeting: Linux `/proc/<pid>/stat` `tpgid`, macOS/BSD `ps` `tpgid`, then process-group/process fallbacks
@@ -78,6 +80,12 @@ Or let an agent step create it on first use:
 termdeck step main 'pwd && ls' --cwd "$PWD" --timeout-ms 5000 --autostart
 ```
 
+Or use a project-derived session name so callers do not have to manage one:
+
+```bash
+termdeck project-step 'pwd && ls' --cwd "$PWD" --timeout-ms 5000 --autostart
+```
+
 Run a command:
 
 ```bash
@@ -127,6 +135,7 @@ Terminal I/O:
 
 ```bash
 termdeck step <session> [command] [--cwd <path>] [--op run|poll|send|paste|ctrl|signal] [--timeout-ms N] [--startup-timeout-ms N] [--quiescence-ms N] [--lines N] [--autostart]
+termdeck project-step [command] [--cwd <path>] [--name <label>] [--op run|poll|send|paste|ctrl|signal] [--timeout-ms N] [--autostart]
 termdeck run <session> <command> [--timeout-ms N] [--quiescence-ms N]
 termdeck script <session> [file] [--inline <script>] [--shell bash] [--timeout-ms N] [--quiescence-ms N]
 termdeck paste <session> [file] [--inline <text>] [--enter] [--timeout-ms N] [--quiescence-ms N]
@@ -141,6 +150,9 @@ Inspection:
 
 ```bash
 termdeck state <session> [--lines N] [--autostart]
+termdeck summary <session> [--lines N] [--events N] [--autostart]
+termdeck last-command <session>
+termdeck search <query> [--session ID] [--cwd PATH] [--task NAME] [--kind transcript,events,commands,metadata,tasks] [--regex] [--limit N] [--context N]
 termdeck screen <session>
 termdeck scrollback <session> [--lines N]
 termdeck transcript <session>
@@ -153,7 +165,48 @@ termdeck replay <session> [--lines N]
 termdeck clear-scrollback <session>
 ```
 
-`step` is the agent-friendly wrapper: it can create a missing session with `--cwd`, perform one action, and always finishes with a compact state line including `status`, `prompt`, `reason`, timeout, exit-code, and truncation flags. Use `--json` when a caller needs the full response object.
+Background task helpers:
+
+```bash
+termdeck task start <name> <command> --cwd <path> [--owner USER] [--labels a,b] [--ttl-ms N] [--restart-policy never|on-exit|on-failure] [--max-restarts N] [--backoff-ms N] [--ready-url URL] [--ready-port N] [--expect PATTERN]
+termdeck task status <name>
+termdeck task recover <name>
+termdeck task logs <name> [--lines N]
+termdeck task list
+termdeck task dashboard
+termdeck task prune [--stale] [--expired] [--dry-run]
+termdeck task stop <name>
+```
+
+Session cleanup:
+
+```bash
+termdeck list [--cwd <path>] [--name <text>] [--status ready|running|repl|password|confirm|editor|pager|eof|unknown]
+termdeck prune [--cwd <path>] [--name <text>] [--status STATUS]
+```
+
+## MCP server
+
+`termdeck-mcp` exposes the same TermDeck capability surface as the CLI over stdio MCP. CLI, MCP, and the web UI are peer access surfaces; `termdeckd` remains the owner of PTYs, sessions, transcripts, and web observation.
+
+Register the server directly. When no environment is provided, CLI and MCP discover an existing daemon by checking the system socket at `/var/lib/termdeck/termdeckd.sock` before falling back to `~/.termdeck/termdeckd.sock`. Agents do not need to choose a backend.
+
+```toml
+[mcp_servers.termdeck]
+command = "termdeck-mcp"
+```
+
+Set `TERMDECK_HOME` or `TERMDECK_SOCKET` only when you intentionally want project-isolated state or a non-default daemon.
+
+The MCP `step` tool is the agent-friendly default entrypoint. It discovers or autostarts `termdeckd` by default, creates a missing session when `cwd` is supplied, and returns stable JSON fields such as `status`, `reason`, `prompt`, `exitCode`, `timedOut`, `outputTruncated`, `lastSeq`, `transcriptPath`, and `cwd`. `project_step` goes one level higher by deriving a stable session id from `cwd` and an optional label.
+
+`summary` returns a compact inspection object with a screen tail, output tail, recent events, and likely error lines. `last_command` returns structured command id, command text, seq bounds, duration, exit code, timeout flag, and output tail. Use these when an agent needs state without replaying a large transcript.
+
+`search` scans local sessions and task metadata across transcripts, events, commands, session metadata, and task specs. It supports filters for session id, task name, cwd, kind, regex, limit, and context lines. The Web UI exposes the same search for human inspection.
+
+Agent-facing text views redact common secret-shaped values by default, including returned output, log/events views, summaries, and last-command records. Web snapshots and WebSocket output remain visible because the web surface is a local human observer. Raw transcripts remain local artifacts and should still be treated as sensitive.
+
+Task helpers report stale metadata, expired TTLs, exited backing processes, restart counts, readiness diagnostics, and orphan `task-*` sessions. Optional restart policies can restart exited tasks on any exit or only non-zero exit. The web UI surfaces the same dashboard data with filters for active and attention-needed work, task logs, search results, and safe task stop/recover/prune controls.
 
 Synchronization:
 
@@ -176,7 +229,7 @@ Environment variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `TERMDECK_HOME` | `~/.termdeck` | Runtime state root |
+| `TERMDECK_HOME` | discovered daemon, then `~/.termdeck` | Runtime state root |
 | `TERMDECK_SOCKET` | `$TERMDECK_HOME/termdeckd.sock` | Unix socket path |
 | `TERMDECK_WEB_PORT` | unset | Starts web UI on `127.0.0.1:<port>` |
 

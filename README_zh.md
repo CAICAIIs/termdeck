@@ -22,6 +22,7 @@ TermDeck 面向 agent 工作流：终端会话需要跨越单次 CLI 调用继�
 - 只读 Web UI：JSON REST 控制端点 + binary protobuf WebSocket 事件
 - 状态识别：running、ready、repl、password、confirm、editor、pager、continuation、eof
 - 会话文件：transcript、events、commands、interactions、metadata、state
+- `run` 使用 shell marker 切分命令输出边界并捕获 exit code
 - 历史检查：history、inspect、log、events、replay
 - 密码输入路径不会写入 command log
 - 跨平台信号发送：Linux 使用 `/proc/<pid>/stat` 的 `tpgid`，macOS/BSD 使用 `ps` 的 `tpgid`，再退回到进程组或进程信号
@@ -127,6 +128,7 @@ termdeck configure <session> [--prompt-regex <regex>]
 
 ```bash
 termdeck step <session> [command] [--cwd <path>] [--op run|poll|send|paste|ctrl|signal] [--timeout-ms N] [--startup-timeout-ms N] [--quiescence-ms N] [--lines N] [--autostart]
+termdeck project-step [command] [--cwd <path>] [--name <label>] [--op run|poll|send|paste|ctrl|signal] [--timeout-ms N] [--autostart]
 termdeck run <session> <command> [--timeout-ms N] [--quiescence-ms N]
 termdeck script <session> [file] [--inline <script>] [--shell bash] [--timeout-ms N] [--quiescence-ms N]
 termdeck paste <session> [file] [--inline <text>] [--enter] [--timeout-ms N] [--quiescence-ms N]
@@ -141,6 +143,9 @@ termdeck signal <session> <signal> [--timeout-ms N] [--quiescence-ms N]
 
 ```bash
 termdeck state <session> [--lines N] [--autostart]
+termdeck summary <session> [--lines N] [--events N] [--autostart]
+termdeck last-command <session>
+termdeck search <query> [--session ID] [--cwd PATH] [--task NAME] [--kind transcript,events,commands,metadata,tasks] [--regex] [--limit N] [--context N]
 termdeck screen <session>
 termdeck scrollback <session> [--lines N]
 termdeck transcript <session>
@@ -153,7 +158,15 @@ termdeck replay <session> [--lines N]
 termdeck clear-scrollback <session>
 ```
 
-`step` 是面向 agent 的糖衣命令：它可以用 `--cwd` 创建缺失会话，执行一个动作，并固定以一行紧凑状态结束，包含 `status`、`prompt`、`reason`、超时、退出码和截断标记。调用方需要完整对象时使用 `--json`。
+`step` 是面向 agent 的糖衣命令：它可以用 `--cwd` 创建缺失会话，执行一个动作，并固定以一行紧凑状态结束，包含 `status`、`prompt`、`reason`、超时、退出码和截断标记。`project-step` 会从 `cwd` 和可选 label 派生稳定 session id，适合不想手动维护 session 名的 agent。`summary` 返回低 token 的状态、屏幕尾部、输出尾部、近期事件和疑似错误行。调用方需要完整对象时使用 `--json`。
+
+`run` 会在 shell 内加入 begin/exit marker，以便从终端回显中稳定切出命令输出并返回 `exitCode`。命令仍在持久 shell 中执行，所以 `cd`、环境变量和 shell 函数等状态会保留。
+
+`last-command` 返回结构化 command id、命令、seq 范围、duration、exit code、timeout 和 output tail。面向 agent 的文本视图默认会对常见 secret 形态做 redaction，包括返回输出、log/events/summary 和 last-command；Web snapshot 与 WebSocket 输出仍保持可见，因为 Web 是本地人类观察面。原始 transcript 仍是本地磁盘 artifact，需要继续按敏感数据处理。
+
+`search` 可以搜索本地 sessions 和 task metadata，覆盖 transcript、events、commands、session metadata 和 task specs，并支持 session/task/cwd/kind/regex/limit/context 过滤。Web UI 也提供同一套搜索能力，方便人类观察和定位历史输出。
+
+后台任务支持 `--owner`、`--labels`、`--ttl-ms`、`--restart-policy`、`--max-restarts`、`--backoff-ms`、`task dashboard`、`task prune` 和 `task recover`。状态会区分 stale metadata、TTL 过期、进程已退出、restart count 和 orphan `task-*` session。Web UI 会展示 task dashboard，并提供 active/attention 过滤、task logs、搜索结果以及 stop/recover/prune 安全控制，但仍不向 PTY 发送输入。
 
 同步等待：
 

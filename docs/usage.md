@@ -8,6 +8,7 @@ TermDeck has three surfaces:
 
 - `termdeckd`: daemon that owns PTY sessions and session files
 - `termdeck`: CLI that sends protobuf requests to the daemon over a Unix socket
+- `termdeck-mcp`: stdio MCP server that exposes the same daemon-backed capability surface as the CLI
 - Web UI: observe-only browser view for terminal output
 
 The daemon must be running before CLI commands work. Sessions keep running after the CLI process exits.
@@ -30,6 +31,12 @@ To isolate state for one project:
 ```bash
 export TERMDECK_HOME="$PWD/.termdeck"
 termdeckd
+```
+
+For agent usage, `project-step` can derive a stable session id from `cwd`, which avoids passing a manually chosen session name through every call:
+
+```bash
+termdeck project-step 'pwd && ls' --cwd "$PWD" --autostart
 ```
 
 For a machine-wide local deployment, write the env var into a wrapper in a directory on `PATH`:
@@ -93,6 +100,24 @@ By default, commands print the incremental terminal output with ANSI escapes rem
 ```bash
 termdeck run main 'echo ok' --json
 ```
+
+`run` wraps the command with shell markers so the response can separate command output from terminal echo and report `exitCode` when the command completes. The persistent shell still executes the command itself, so stateful operations such as `cd`, exported variables, and shell functions remain in the session.
+
+Read the last structured command record:
+
+```bash
+termdeck last-command main --json
+```
+
+Search local session and task artifacts:
+
+```bash
+termdeck search 'error|failed' --regex --kind transcript,events,tasks --limit 50 --context 2 --json
+```
+
+Search scans transcripts, events, command records, session metadata, and task specs under `TERMDECK_HOME`. Use `--session`, `--task`, and `--cwd` to narrow the result set.
+
+Agent-facing text views redact common secret-shaped values by default, including returned command output, screen/log/events/summary views, and last-command records. The web snapshot remains visible because it is a local human observer surface. The raw local transcript remains an artifact on disk, so keep `TERMDECK_HOME` permissions tight and avoid entering secrets unless necessary.
 
 Use `--raw` when a command path needs the original PTY bytes, including ANSI color/control sequences:
 
@@ -219,6 +244,14 @@ termdeck scrollback main --lines 200
 
 `screen` and `scrollback` serve agent inspection. They strip terminal state to text. The Web UI renders serialized xterm state plus live raw PTY events from the daemon.
 
+Read a compact agent-oriented summary:
+
+```bash
+termdeck summary main --lines 80 --events 20 --json
+```
+
+The summary includes current state, a rendered screen tail, recent output tail, recent event lines, and likely error lines. It is intended for low-token inspection before deciding whether to fetch raw logs or transcript data.
+
 Read metadata:
 
 ```bash
@@ -237,6 +270,14 @@ List persisted sessions:
 
 ```bash
 termdeck history
+```
+
+Filter live sessions before cleanup:
+
+```bash
+termdeck list --cwd "$PWD"
+termdeck list --name build --status ready
+termdeck prune --cwd "$PWD" --status eof
 ```
 
 Inspect one session's metadata:
@@ -269,6 +310,35 @@ Print the raw transcript path:
 termdeck transcript main
 ```
 
+## Background tasks
+
+Task helpers are named TermDeck sessions with small readiness metadata. They do not bypass the daemon or create a separate terminal runner.
+
+```bash
+termdeck task start web 'pnpm dev --host 127.0.0.1' --cwd "$PWD" --labels dev,web --ttl-ms 7200000 --restart-policy on-failure --max-restarts 2 --backoff-ms 3000 --ready-port 5173 --autostart
+termdeck task status web
+termdeck task recover web
+termdeck task logs web --lines 100
+termdeck task dashboard
+termdeck task prune --stale --expired --dry-run
+termdeck task stop web
+```
+
+Readiness can be detected with `--ready-url`, `--ready-port`, or `--expect`. When more than one readiness check is supplied, all checks must pass and `task status` reports per-check diagnostics plus a short log tail on failure. Task metadata can include `--owner`, `--labels`, `--ttl-ms`, and restart policy fields. Status distinguishes stale metadata, expired TTLs, exited backing processes, and restart counts. If task metadata exists but the backing session is gone, status reports a stale task; `task recover` recreates the session from metadata and reruns the task command. `task dashboard` also reports orphan `task-*` sessions that have no task metadata.
+
+Restart policies are `never`, `on-exit`, and `on-failure`. Automatic restarts honor `--max-restarts` and `--backoff-ms`.
+
+## MCP
+
+`termdeck-mcp` is the MCP access surface for the same daemon-owned capabilities exposed by `termdeck`.
+
+```toml
+[mcp_servers.termdeck]
+command = "termdeck-mcp"
+```
+
+By default, MCP uses the same daemon discovery path as the CLI: explicit `TERMDECK_SOCKET`, explicit `TERMDECK_HOME`, existing `/var/lib/termdeck/termdeckd.sock`, then `~/.termdeck/termdeckd.sock`. Set `TERMDECK_HOME` only for intentional project isolation. Use MCP `step` as the default low-level agent entrypoint. It autostarts the daemon by default, supports missing-session creation via `cwd`, terminal operations equivalent to CLI `step --op`, and stable JSON results. Use MCP `project_step` when the caller wants TermDeck to derive the session id from `cwd`. CLI and MCP should remain capability-equivalent; add new public terminal operations to both surfaces and keep the parity test passing.
+
 ## Session files
 
 Each session lives under:
@@ -298,10 +368,12 @@ TERMDECK_WEB_PORT=8787 termdeckd
 
 The browser uses:
 
-- JSON REST for low-frequency session metadata and serialized xterm snapshots
+- `GET /api/sessions` for live session metadata
+- `GET /api/tasks` for task dashboard data, including readiness, stale/expired/exited states, and orphan task sessions
+- JSON REST for serialized xterm snapshots
 - binary protobuf WebSocket events for live output after the snapshot sequence
 
-The browser loads a serialized xterm snapshot first, then subscribes with `afterSeq=lastSeq`. Reconnects use `afterSeq` to replay events missed during a disconnect while the daemon retains them.
+The browser loads a serialized xterm snapshot first, then subscribes with `afterSeq=lastSeq`. Reconnects use `afterSeq` to replay events missed during a disconnect while the daemon retains them. The sidebar supports active and attention filters for sessions and tasks; the top dashboard summarizes session count, task count, ready tasks, and attention-needed items. Web task controls can stop, recover, and prune stale/expired tasks, but the browser remains observe-only for PTY input.
 
 ## Automation pattern
 

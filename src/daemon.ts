@@ -8,9 +8,12 @@ import type { Duplex } from 'node:stream';
 import stripAnsi from 'strip-ansi';
 import { encodeEvent, FrameReader, writeFrame, type Event, type Request, type Response } from './protocol.js';
 import { socketAccessMode } from './platform.js';
+import { redactJsonl, redactText } from './redact.js';
 import { rootDir, sessionDir, sessionsDir, socketPath } from './paths.js';
 import { replayTranscript } from './replay.js';
+import { searchTermDeck, type SearchKind } from './search.js';
 import { TermSession } from './session.js';
+import { taskDashboard, taskLogs, taskPrune, taskRecover, taskStop } from './tasks.js';
 import { webAppJs, webHtml } from './web.js';
 
 const require = createRequire(import.meta.url);
@@ -54,6 +57,10 @@ class SessionManager {
 
   list(): Response['sessions'] {
     return [...this.sessions.values()].map((s) => s.info());
+  }
+
+  has(id: string): boolean {
+    return this.sessions.has(id);
   }
 
   kill(id: string): void {
@@ -124,8 +131,8 @@ function inspectSession(id: string): Record<string, unknown> {
 
 function tailFile(file: string, lines: number): string {
   const text = readFileSync(file, 'utf8');
-  if (!lines || lines <= 0) return text;
-  return text.split('\n').slice(-lines).join('\n');
+  const out = !lines || lines <= 0 ? text : text.split('\n').slice(-lines).join('\n');
+  return redactText(out);
 }
 
 function eventLines(id: string, afterSeq: number, limit: number): string {
@@ -137,7 +144,7 @@ function eventLines(id: string, afterSeq: number, limit: number): string {
       return false;
     }
   });
-  return rows.slice(0, limit || rows.length).join('\n');
+  return redactJsonl(rows.slice(0, limit || rows.length).join('\n'));
 }
 
 async function handle(req: Request, socket?: Socket): Promise<Response> {
@@ -323,6 +330,48 @@ function handleWebRequest(req: IncomingMessage, res: { writeHead(code: number, h
     if (url.pathname === '/xterm.css') return send(res, 200, 'text/css; charset=utf-8', readFileSync(xtermCssPath));
     if (url.pathname === '/xterm-addon-fit.js') return send(res, 200, 'text/javascript; charset=utf-8', readFileSync(xtermFitPath));
     if (url.pathname === '/api/sessions') return send(res, 200, 'application/json', JSON.stringify(manager.list()));
+    if (url.pathname === '/api/tasks') {
+      void taskDashboard({ timeoutMs: 1 }).then((dashboard) => send(res, 200, 'application/json', JSON.stringify(dashboard))).catch((err: unknown) => send(res, 500, 'text/plain; charset=utf-8', err instanceof Error ? err.message : String(err)));
+      return;
+    }
+    if (url.pathname === '/api/search') {
+      const query = url.searchParams.get('q') ?? '';
+      if (!query) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'missing q' }));
+      const kinds = url.searchParams.get('kind')?.split(',').map((part) => part.trim()).filter(Boolean) as SearchKind[] | undefined;
+      return send(res, 200, 'application/json', JSON.stringify(searchTermDeck({
+        query,
+        session: url.searchParams.get('session') ?? undefined,
+        cwd: url.searchParams.get('cwd') ?? undefined,
+        task: url.searchParams.get('task') ?? undefined,
+        kinds,
+        limit: Number(url.searchParams.get('limit') ?? 50),
+        context: Number(url.searchParams.get('context') ?? 1),
+        regex: url.searchParams.get('regex') === '1',
+        ignoreCase: url.searchParams.get('caseSensitive') !== '1',
+        redact: false,
+      })));
+    }
+    const taskLogsMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/logs$/);
+    if (taskLogsMatch) {
+      const name = decodeURIComponent(taskLogsMatch[1]);
+      const lines = Number(url.searchParams.get('lines') ?? 120);
+      void taskLogs(name, lines, true).then((body) => send(res, 200, 'application/json', JSON.stringify(body))).catch((err: unknown) => send(res, 500, 'text/plain; charset=utf-8', err instanceof Error ? err.message : String(err)));
+      return;
+    }
+    if (req.method === 'POST') {
+      const taskActionMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/(stop|recover)$/);
+      if (taskActionMatch) {
+        const name = decodeURIComponent(taskActionMatch[1]);
+        const action = taskActionMatch[2];
+        const run = action === 'stop' ? taskStop(name, true) : taskRecover(name, { autostart: true });
+        void run.then((body) => send(res, 200, 'application/json', JSON.stringify(body))).catch((err: unknown) => send(res, 500, 'text/plain; charset=utf-8', err instanceof Error ? err.message : String(err)));
+        return;
+      }
+      if (url.pathname === '/api/tasks/prune') {
+        void taskPrune({ stale: true, expired: true, autostart: true }).then((body) => send(res, 200, 'application/json', JSON.stringify(body))).catch((err: unknown) => send(res, 500, 'text/plain; charset=utf-8', err instanceof Error ? err.message : String(err)));
+        return;
+      }
+    }
     const screenMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/screen$/);
     if (screenMatch) {
       const s = manager.get(decodeURIComponent(screenMatch[1]));
@@ -360,10 +409,19 @@ function handleWebSocketUpgrade(req: IncomingMessage, socket: Duplex): void {
     socket.destroy();
     return;
   }
+  if (!manager.has(session)) {
+    socket.write(['HTTP/1.1 404 Not Found', 'Connection: close', '', 'unknown session'].join('\r\n'));
+    socket.destroy();
+    return;
+  }
   const accept = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
   socket.write(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade', `Sec-WebSocket-Accept: ${accept}`, '', ''].join('\r\n'));
   const afterSeq = Number(url.searchParams.get('afterSeq') ?? 0);
   const s = manager.get(session);
+  socket.on('error', (err: Error) => {
+    console.error(`termdeck websocket error: ${err.message}`);
+    s.off('event', onEvent);
+  });
   socket.on('data', (chunk: Buffer) => {
     try {
       handleWebSocketData(chunk, s);
@@ -372,9 +430,18 @@ function handleWebSocketUpgrade(req: IncomingMessage, socket: Duplex): void {
     }
   });
   const onEvent = (event: Event) => {
-    if (event.session === session) socket.write(wsBinary(encodeEvent(event)));
+    if (event.session !== session) return;
+    if (!socket.destroyed && !socket.write(wsBinary(encodeEvent(event)))) {
+      s.off('event', onEvent);
+      socket.destroy();
+    }
   };
-  for (const event of s.eventsAfter(afterSeq)) socket.write(wsBinary(encodeEvent(event)));
+  for (const event of s.eventsAfter(afterSeq)) {
+    if (!socket.write(wsBinary(encodeEvent(event)))) {
+      socket.destroy();
+      return;
+    }
+  }
   s.on('event', onEvent);
   socket.on('close', () => s.off('event', onEvent));
 }

@@ -6,6 +6,7 @@ import * as pty from 'node-pty';
 import xtermHeadless from '@xterm/headless';
 import serializeAddon from '@xterm/addon-serialize';
 import { platformSignalInfo, signalProcessGroup } from './platform.js';
+import { redactText } from './redact.js';
 import { TextRing } from './ring.js';
 import { detectState, type StateResult } from './state.js';
 import type { Event, PromptKind, Status } from './protocol.js';
@@ -56,6 +57,34 @@ function filterScriptResult(r: WaitResult, begin: string, endPrefix: string): Wa
   return { ...r, output, exitCode: Number.isFinite(exitCode) ? exitCode : undefined };
 }
 
+function filterMarkedRunResult(r: WaitResult, begin: string, endPrefix: string): WaitResult {
+  const endAt = r.output.lastIndexOf(endPrefix);
+  const beginAt = endAt === -1 ? r.output.lastIndexOf(begin) : r.output.lastIndexOf(begin, endAt);
+  if (beginAt === -1) return r;
+  const commandOutputStart = beginAt + begin.length;
+  if (endAt === -1) {
+    const output = r.output.slice(commandOutputStart).replace(/^\r?\n/, '');
+    return { ...r, output };
+  }
+  const afterEnd = r.output.indexOf('__', endAt + endPrefix.length);
+  const codeText = afterEnd === -1 ? undefined : r.output.slice(endAt + endPrefix.length, afterEnd);
+  const output = r.output.slice(commandOutputStart, endAt).replace(/^\r?\n/, '').replace(/\r?\n$/, '');
+  const exitCode = codeText === undefined ? undefined : Number(codeText);
+  return { ...r, output, exitCode: Number.isFinite(exitCode) ? exitCode : undefined };
+}
+
+function markedRun(command: string): { input: string; begin: string; endPrefix: string } {
+  const delimiter = `TERMDECK_RUN_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  if (command.includes(delimiter)) throw new Error('command contains generated marker delimiter');
+  const begin = `__TERMDECK_BEGIN:${delimiter}__`;
+  const endPrefix = `__TERMDECK_EXIT:${delimiter}:`;
+  return {
+    begin,
+    endPrefix,
+    input: `echo; echo ${begin}; { ${command}\n}; __termdeck_rc=$?; echo ${endPrefix}\${__termdeck_rc}__\r`,
+  };
+}
+
 function controlChar(key: string): string {
   const k = key.toLowerCase();
   if (k === 'escape' || k === 'esc' || k === '[') return '\x1b';
@@ -87,6 +116,8 @@ export class TermSession extends EventEmitter {
   private lastActivityAt = this.startedAt;
   private lastOutputAt = Date.now();
   private exited = false;
+  private lastExitCode: number | undefined;
+  private lastExitSignal: string | undefined;
   private lastStatus: Status = 'unknown';
   private readonly shell: string;
   private readonly shellArgs: string[];
@@ -127,6 +158,8 @@ export class TermSession extends EventEmitter {
     this.ptyProcess.onData((data) => this.onOutput(data));
     this.ptyProcess.onExit(({ exitCode, signal }) => {
       this.exited = true;
+      this.lastExitCode = exitCode;
+      this.lastExitSignal = signal === undefined ? undefined : String(signal);
       this.emitEvent({ kind: 'exit', code: exitCode, signal: signal === undefined ? undefined : String(signal) });
       this.writeSessionMeta(new Date().toISOString());
       this.transcript.end();
@@ -155,6 +188,9 @@ export class TermSession extends EventEmitter {
       promptRegex: this.promptRegex,
       description: this.description,
       startedAt: this.startedAt,
+      exited: this.exited,
+      exitCode: this.lastExitCode,
+      exitSignal: this.lastExitSignal,
       lastActivityAt: this.lastActivityAt,
       transcript: this.transcriptPath,
       events: this.eventsPath,
@@ -172,7 +208,24 @@ export class TermSession extends EventEmitter {
   }
 
   run(command: string, timeoutMs = 30_000, quiescenceMs = 1_000): Promise<WaitResult> {
-    return this.writeAndWait(`${command}\r`, timeoutMs, quiescenceMs, true);
+    const marked = markedRun(command);
+    const commandId = `cmd-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const startedAt = Date.now();
+    appendFileSync(this.commandsPath, `${JSON.stringify({ id: commandId, kind: 'run', tsMs: startedAt, data: command, startSeq: this.seq })}\n`, { mode: 0o600 });
+    return this.writeAndWait(marked.input, timeoutMs, quiescenceMs, true, command, false).then((r) => {
+      const filtered = filterMarkedRunResult(r, marked.begin, marked.endPrefix);
+      appendFileSync(this.commandsPath, `${JSON.stringify({
+        id: commandId,
+        result: {
+          endSeq: filtered.lastSeq,
+          durationMs: Date.now() - startedAt,
+          exitCode: filtered.exitCode,
+          timedOut: filtered.timedOut,
+          outputTail: filtered.output.slice(-4_000),
+        },
+      })}\n`, { mode: 0o600 });
+      return filtered;
+    });
   }
 
   send(data: string, timeoutMs = 30_000, quiescenceMs = 1_000): Promise<WaitResult> {
@@ -228,6 +281,10 @@ printf '\n__TERMDECK_BEGIN:%s__\n' '${delimiter}'; ${shell} /tmp/${delimiter}.sh
     return this.transcriptPath;
   }
 
+  redact(text: string): string {
+    return redactText(text);
+  }
+
   resize(rows: number, cols: number): void {
     this.rows = rows;
     this.cols = cols;
@@ -248,7 +305,7 @@ printf '\n__TERMDECK_BEGIN:%s__\n' '${delimiter}'; ${shell} /tmp/${delimiter}.sh
     const buffer = this.term.buffer.active;
     for (let i = 0; i < this.term.rows; i++) lines.push(buffer.getLine(i)?.translateToString(true) ?? '');
     while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
-    return lines.join('\n');
+    return this.redact(lines.join('\n'));
   }
 
   scrollback(lines = 200): string {
@@ -256,7 +313,7 @@ printf '\n__TERMDECK_BEGIN:%s__\n' '${delimiter}'; ${shell} /tmp/${delimiter}.sh
     const buffer = this.term.buffer.active;
     const start = Math.max(0, buffer.length - lines);
     for (let i = start; i < buffer.length; i++) out.push(buffer.getLine(i)?.translateToString(true) ?? '');
-    return out.join('\n').replace(/\n+$/, '');
+    return this.redact(out.join('\n').replace(/\n+$/, ''));
   }
 
   snapshot(scrollback = 1_000): string {
@@ -278,11 +335,11 @@ printf '\n__TERMDECK_BEGIN:%s__\n' '${delimiter}'; ${shell} /tmp/${delimiter}.sh
     this.writeSessionMeta();
   }
 
-  private writeAndWait(data: string, timeoutMs: number, quiescenceMs: number, logInput: boolean): Promise<WaitResult> {
+  private writeAndWait(data: string, timeoutMs: number, quiescenceMs: number, logInput: boolean, logData = data, appendCommandLog = true): Promise<WaitResult> {
     const mark = this.ring.mark();
     if (logInput) {
-      this.emitEvent({ kind: 'input', data });
-      appendFileSync(this.commandsPath, `${JSON.stringify({ tsMs: Date.now(), data })}\n`, { mode: 0o600 });
+      this.emitEvent({ kind: 'input', data: logData });
+      if (appendCommandLog) appendFileSync(this.commandsPath, `${JSON.stringify({ tsMs: Date.now(), data: logData })}\n`, { mode: 0o600 });
     }
     this.ptyProcess.write(data);
     this.lastActivityAt = new Date().toISOString();
@@ -339,7 +396,7 @@ printf '\n__TERMDECK_BEGIN:%s__\n' '${delimiter}'; ${shell} /tmp/${delimiter}.sh
   private resultSince(mark: number, timedOut: boolean): WaitResult {
     const state = this.status();
     const output = this.ring.sinceWithStats(mark);
-    return { output: output.text, status: state.status, prompt: state.prompt, reason: state.reason, lastSeq: this.seq, timedOut, outputTruncated: output.truncated, droppedChars: output.droppedChars };
+    return { output: this.redact(output.text), status: state.status, prompt: state.prompt, reason: state.reason, lastSeq: this.seq, timedOut, outputTruncated: output.truncated, droppedChars: output.droppedChars };
   }
 
   private onOutput(data: string): void {
